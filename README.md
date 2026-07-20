@@ -199,6 +199,179 @@ java InterruptStatusFlag    # interrupted() vs isInterrupted()
 
 ---
 
+## 4. Joins
+
+**Goal:** Make the **current** thread wait until **another** thread has finished (`run()` returned / thread terminated).
+
+```java
+worker.start();
+worker.join();   // current thread pauses here until worker dies
+// safe: worker's work is done
+```
+
+### Overloads
+
+| Call | Meaning |
+|------|---------|
+| `t.join()` | Wait until `t` terminates (no time limit) |
+| `t.join(ms)` | Wait at most ~ms; may return while `t` is still alive |
+| `t.join(ms, nanos)` | Same idea; timing still not exact (OS-limited, like `sleep`) |
+
+Like `sleep`, `join` can throw `InterruptedException` if the waiting thread is interrupted.
+
+### How the JVM executes this
+
+```
+main                         worker
+────                         ──────
+worker.start()
+worker.join()  ──────────►   running...
+  (WAITING / TIMED_WAITING)
+  paused, not using CPU      ... still working ...
+                             run() ends → TERMINATED
+  ◄───────────────────────── woken up
+continues...
+```
+
+1. **`join()`** parks the caller until the target thread’s life ends.
+2. It is **not** busy-waiting — efficient, like sleep.
+3. **`join(timeout)`** can return early even if the other thread is still alive — check `t.isAlive()` if you care.
+4. **Interrupt** on the waiting thread aborts `join` with `InterruptedException` (target may still be running).
+
+### Why it matters
+
+Without `join()`, `main` can finish (or use a result) **before** the worker is done. `join()` is the basic “wait for that task to complete.”
+
+### Examples in this repo
+
+```bash
+cd 04-joins
+javac *.java
+java BasicJoin
+java JoinWithTimeout
+java JoinAndInterrupt
+```
+
+---
+
+## 5. Thread Interference
+
+**Goal:** Understand why shared data breaks when two threads touch it at once — even with “simple” code like `c++`.
+
+### The naive `Counter`
+
+```java
+public void increment() { c++; }
+public void decrement() { c--; }
+```
+
+Looks like one step. The JVM actually does **three** steps for `c++`:
+
+1. **Read** current `c`
+2. **Add** 1 to that value (in a register / local)
+3. **Write** the result back to `c`
+
+Same idea for `c--`.
+
+### Lost update (Oracle’s interleaving)
+
+Start with `c = 0`. Thread A increments, Thread B decrements at the “same time”:
+
+```
+A: read c (=0)
+B: read c (=0)
+A: compute 0+1 → 1
+B: compute 0-1 → -1
+A: write 1 into c
+B: write -1 into c   ← A's update is overwritten / lost
+```
+
+Final `c` can be wrong. Next run might lose B’s update, or (by luck) look correct. That **non-determinism** is why these bugs are hard to catch.
+
+### How the JVM / CPU makes this possible
+
+```
+Thread A CPU                    Thread B CPU
+─────────                       ─────────
+load c                          load c
+add 1                           sub 1
+store c                         store c
+         ▲ steps can interleave in any order ▲
+```
+
+Both threads read a **stale** snapshot, then both write — last write wins; the other update disappears.
+
+This is a classic **race condition** on shared mutable state. Fix comes later: **synchronization** (locks), or atomic types — Oracle’s next sections.
+
+### Examples in this repo
+
+```bash
+cd 05-thread-interference
+javac *.java
+java InterferenceDemo   # run several times — often Actual ≠ 0
+java VisibleRace        # slowed 3-step increment so loss is obvious
+```
+
+---
+
+## 6. Memory Consistency Errors
+
+**Goal:** Different threads can have **different views** of the “same” variable. Not only can updates interleave (interference) — a write in thread A might **not be visible** to thread B yet.
+
+### Oracle’s example
+
+```java
+int counter = 0;
+// Thread A:  counter++;
+// Thread B:  System.out.println(counter);  // might print 0!
+```
+
+In one thread, you’d expect `1`. Across threads, **no guarantee** unless you create a **happens-before** relationship.
+
+### Happens-before (the strategy)
+
+**Happens-before** = a JVM guarantee: writes by statement X are visible to statement Y (and ordering is respected).
+
+You don’t need CPU-cache theory — you need actions that **create** happens-before edges.
+
+### Actions you already know
+
+| Action | Guarantee |
+|--------|-----------|
+| **`Thread.start()`** | Everything the starter did *before* `start()` is visible **to** the new thread |
+| **`Thread.join()`** | Everything the finished thread did is visible **to** the joiner *after* `join()` returns |
+| **Synchronization** | Coming next (`synchronized`, locks) — also creates happens-before |
+| **`volatile` writes/reads** | Write to volatile happens-before later read of that volatile |
+
+```
+main writes shared=7
+main calls start()  ──happens-before──►  worker reads shared (sees 7)
+worker writes shared=99
+worker ends
+main join() returns  ◄──happens-before──  main reads shared (sees 99)
+```
+
+### Interference vs consistency (short)
+
+| Problem | Symptom |
+|---------|---------|
+| **Interference** | Two threads update together → lost updates (`c++` race) |
+| **Memory consistency** | One thread wrote, another never sees it (or sees it out of order) |
+
+Both are fixed by establishing happens-before (sync, volatile, atomics, join, etc.).
+
+### Examples in this repo
+
+```bash
+cd 06-memory-consistency
+javac *.java
+java HappensBeforeStartJoin   # start/join make shared visible — no volatile needed
+java VisibilityFixedVolatile  # volatile ready publishes data=42
+java VisibilityBug            # may hang or “get lucky” — no happens-before
+```
+
+---
+
 ## Topics (more coming)
 
 <!-- Next Oracle sections go here -->
