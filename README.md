@@ -372,6 +372,158 @@ java VisibilityBug            # may hang or “get lucky” — no happens-befor
 
 ---
 
+## 7. Synchronized Methods
+
+**Goal:** Fix **interference** (lost updates) and **memory consistency** (stale reads) by guarding shared object state with a **lock**.
+
+### Oracle’s pattern
+
+```java
+public class SynchronizedCounter {
+    private int c = 0;
+
+    public synchronized void increment() { c++; }
+    public synchronized void decrement() { c--; }
+    public synchronized int value()       { return c; }
+}
+```
+
+Add `synchronized` to the method declaration. Each instance has **one lock** (the object itself).
+
+### Two effects (Oracle)
+
+**1. Mutual exclusion (no interleaving on this object)**  
+Only **one** thread at a time can run **any** `synchronized` method on the **same object**. Others **block** until the lock is released.
+
+```
+Thread A: increment()  ── acquires lock on counter
+Thread B: decrement()  ── BLOCKED (waits for A)
+Thread A: exits method ── releases lock
+Thread B: runs
+```
+
+**2. Happens-before (visibility)**  
+When a `synchronized` method **exits**, its writes are visible to the **next** thread that enters **any** `synchronized` method on that **same** object.
+
+Unlock happens-before the next lock on that monitor.
+
+### How the JVM executes this
+
+```
+synchronized void increment() { c++; }
+
+  bytecode equivalent:
+    monitorenter   // acquire lock on "this"
+    ... c++ ...
+    monitorexit    // release lock (also on exception paths)
+```
+
+- Lock is tied to the **object** (`this` for instance methods).
+- All `synchronized` methods on **one** object share **one** lock.
+- Two **different** `SynchronizedCounter` instances → two locks → no blocking between them.
+
+### Rules & warnings
+
+| Topic | Detail |
+|-------|--------|
+| Constructors | **Cannot** be `synchronized` (syntax error) |
+| Safe strategy | If an object is shared, read/write its fields only via `synchronized` methods |
+| `final` fields | After construction, can be read without sync (immutable) |
+| **this leak** | Don’t publish `this` in constructor (e.g. `instances.add(this)`) — other threads may see half-built object |
+| Liveness | Sync fixes correctness but can cause **deadlock** / blocking later |
+
+### Examples in this repo
+
+```bash
+cd 07-synchronized-methods
+javac *.java
+java SynchronizedCounterDemo   # always 0 (vs InterferenceDemo)
+java SynchronizedBlocking      # waiter blocks until slow thread releases lock
+```
+
+---
+
+## 8. Intrinsic Locks and Synchronization
+
+**Goal:** Understand the **lock** behind `synchronized` — what it is, where it lives, and finer control with `synchronized` blocks.
+
+### Intrinsic lock (monitor)
+
+Every Java object has a hidden **intrinsic lock** (monitor). Synchronization uses it for:
+
+1. **Exclusive access** — only one thread “owns” the lock at a time; others block.
+2. **Happens-before** — **release** of the lock happens-before the next **acquire** of the same lock.
+
+```
+Thread A: acquire lock → read/write fields → release lock
+Thread B:                    (blocked)              acquire → sees A's writes
+```
+
+### Locks in synchronized methods
+
+| Kind | Lock used |
+|------|-----------|
+| Instance `synchronized void m()` | **`this`** (that object) |
+| `static synchronized void m()` | **`Class` object** for that class (separate from any instance lock) |
+
+Lock is released when the method returns — **even on exception**.
+
+### Synchronized statements (blocks)
+
+Pick **which object** provides the lock:
+
+```java
+public void addName(String name) {
+    synchronized (this) {
+        lastName = name;
+        nameCount++;
+    }
+    nameList.add(name); // outside lock — less blocking
+}
+```
+
+Use when you need:
+
+- **Smaller critical section** (don’t hold lock while calling other objects’ methods).
+- **Fine-grained locks** — different fields, different lock objects.
+
+### MsLunch — fine-grained locking
+
+```java
+private Object lock1 = new Object();
+private Object lock2 = new Object();
+
+void inc1() { synchronized (lock1) { c1++; } }
+void inc2() { synchronized (lock2) { c2++; } }
+```
+
+`inc1` and `inc2` can run **in parallel** because they use **different** locks.  
+**Only safe if `c1` and `c2` are truly independent.**
+
+### Reentrant synchronization
+
+A thread can acquire a lock it **already owns** (same thread enters nested `synchronized` on the same monitor). Without this, `outer()` calling `inner()` would **deadlock itself**.
+
+```
+outer()  → acquire lock on this
+  inner() → re-enter same lock (same thread) ✓
+  release
+release
+```
+
+### Examples in this repo
+
+```bash
+cd 08-intrinsic-locks
+javac *.java
+java AddNameExample
+java MsLunch
+java ReentrantDemo
+java StaticVsInstanceLock
+```
+
+---
+
 ## Topics (more coming)
 
 <!-- Next Oracle sections go here -->
