@@ -12,6 +12,9 @@ java -cp target CachedPoolDemo
 make clean            # remove target/ and stray .class files
 ```
 
+**Package reference:** [java-util-concurrent.md](java-util-concurrent.md) — full `java.util.concurrent` map + tours.  
+**Virtual threads / `Thread` API:** [23-thread-virtual/virtual-threads.md](23-thread-virtual/virtual-threads.md)
+
 ---
 
 ## 1. Defining and Starting a Thread
