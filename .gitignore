@@ -1,0 +1,5 @@
+# Compiled output
+target/
+
+# Never keep .class next to sources
+*.class

@@ -2,6 +2,16 @@
 
 Notes from the [Oracle Concurrency Tutorial](https://docs.oracle.com/javase/tutorial/essential/concurrency/).
 
+### Build / run (lightweight)
+
+All `.class` files go in `target/` — no Maven/Gradle.
+
+```bash
+make compile          # javac -d target …
+java -cp target CachedPoolDemo
+make clean            # remove target/ and stray .class files
+```
+
 ---
 
 ## 1. Defining and Starting a Thread
@@ -935,6 +945,248 @@ java ScheduledExecutorDemo
 
 ---
 
-## Topics (more coming)
+## 16. Thread Pools
 
-<!-- Next: Thread Pools, ... -->
+**Goal:** Reuse **worker threads** to run many `Runnable`/`Callable` tasks — avoid creating a new `Thread` object per task (expensive memory / GC).
+
+### Mental model
+
+```
+submit(task) → queue → idle worker picks it up → runs → worker free for next task
+```
+
+Workers live **separately** from the tasks they execute. One worker often runs many tasks over its lifetime.
+
+### Why pools matter (Oracle’s web-server story)
+
+| Approach | Under flood of requests |
+|----------|-------------------------|
+| `new Thread` per request | Thread count explodes → memory/CPU collapse → **stops responding** |
+| **Fixed pool** | Extra work **queues**; system stays up, slower but **graceful** |
+
+### `Executors` factory methods
+
+| Factory | Behavior |
+|---------|----------|
+| `newFixedThreadPool(n)` | Exactly **n** workers (replaced if a worker dies); queue for overflow |
+| `newCachedThreadPool()` | Grows for short-lived bursts; reuses idle; may shrink |
+| `newSingleThreadExecutor()` | **One** worker — tasks run sequentially |
+| `newScheduledThreadPool(n)` | Scheduled variants of the above |
+
+Need more control (queue type, rejection policy, keep-alive)? Build `ThreadPoolExecutor` / `ScheduledThreadPoolExecutor` directly.
+
+### How fixed pool executes (JVM view)
+
+```
+pool size = 3, submit 6 tasks
+
+workers: W1 W2 W3   queue: T4 T5 T6
+         run T1 T2 T3
+         finish...
+         pull from queue → run T4 T5 T6
+```
+
+### Examples in this repo
+
+```bash
+cd 16-thread-pools
+javac *.java
+java FixedPoolDemo
+java CachedPoolDemo
+java SingleThreadPoolDemo
+java PoolVsNewThread
+```
+
+---
+
+## 17. Fork/Join
+
+**Goal:** Split work **recursively** across cores. `ForkJoinPool` is an `ExecutorService` that uses **work-stealing**: idle workers steal queued subtasks from busy workers.
+
+### Pattern (pseudocode)
+
+```
+if (work is small enough)
+    do it directly
+else
+    split into two pieces
+    fork/invoke both and wait
+```
+
+Wrap in:
+
+| Class | Returns result? |
+|-------|-----------------|
+| `RecursiveAction` | No (e.g. blur pixels into `dst`) |
+| `RecursiveTask<V>` | Yes (e.g. sum, search) |
+
+Then: `new ForkJoinPool().invoke(task)`.
+
+### How it executes
+
+```
+invoke(bigTask)
+        │
+   length >= threshold?
+        │ yes
+   split → left.fork() + right.compute()
+        │
+   idle worker may STEAL left from busy worker's queue
+        │
+   join results / finish writes
+```
+
+### Oracle `ForkBlur` (`RecursiveAction`)
+
+- Source/dest int arrays = pixels.
+- Small range → `computeDirectly()` (average window).
+- Large range → `invokeAll(left, right)`.
+
+### Built-in uses (Java 8+)
+
+- `Arrays.parallelSort(...)` — fork/join under the hood
+- Parallel streams (`stream().parallel()`) — also fork/join
+
+### Examples in this repo
+
+```bash
+make compile
+java -cp target ForkBlur
+java -cp target SumTask
+java -cp target ParallelSortDemo
+```
+
+---
+
+## 18. Concurrent Collections
+
+**Goal:** Thread-safe collections in `java.util.concurrent` that reduce the need for hand-written `synchronized` and help avoid memory consistency errors.
+
+### Categories (Oracle)
+
+| Interface | Typical impl | Role |
+|-----------|--------------|------|
+| `BlockingQueue` | `ArrayBlockingQueue`, `LinkedBlockingQueue` | FIFO; **blocks**/times out on full put or empty take |
+| `ConcurrentMap` | `ConcurrentHashMap` | Concurrent `HashMap` + atomic `putIfAbsent` / `replace` / `remove(k,v)` |
+| `ConcurrentNavigableMap` | `ConcurrentSkipListMap` | Concurrent sorted map (`TreeMap` analog) + floor/ceiling/subMap |
+
+### Happens-before
+
+Add to collection **happens-before** later access/remove of that element — visibility without extra sync for that hand-off.
+
+### BlockingQueue vs guarded `Drop`
+
+Same producer/consumer idea as `wait`/`notify`, but the queue **owns** the coordination:
+
+```java
+queue.put(item);  // wait if full
+item = queue.take(); // wait if empty
+```
+
+### ConcurrentMap atomics
+
+```java
+map.putIfAbsent(k, v);     // add only if missing
+map.replace(k, old, neu);  // replace only if still old
+map.merge(k, 1, Integer::sum); // atomic update
+```
+
+Avoids check-then-act races you’d get with plain `HashMap` + manual sync mistakes.
+
+### Examples in this repo
+
+```bash
+make compile
+java -cp target BlockingQueueDemo
+java -cp target ConcurrentMapDemo
+java -cp target ConcurrentNavigableMapDemo
+```
+
+---
+
+## 19. Atomic Variables
+
+**Goal:** Use `java.util.concurrent.atomic` for **lock-free** updates on a single variable — avoid interference without `synchronized` (and its blocking).
+
+### Memory semantics
+
+- `get` / `set` ≈ **volatile** read/write (set happens-before later get).
+- `compareAndSet`, `incrementAndGet`, etc. share those guarantees.
+
+### Three ways to fix `Counter`
+
+| Version | How | Trade-off |
+|---------|-----|-----------|
+| Plain `c++` | Nothing | Lost updates |
+| `synchronized` methods | Intrinsic lock | Correct; can block under contention |
+| `AtomicInteger` | Lock-free RMW | Correct for simple counters; less locking overhead |
+
+```java
+private AtomicInteger c = new AtomicInteger(0);
+c.incrementAndGet();
+c.decrementAndGet();
+c.get();
+```
+
+### CAS (`compareAndSet`)
+
+```java
+// if value is still expected → set update, return true
+atomic.compareAndSet(expected, update);
+```
+
+Used inside `incrementAndGet`. Foundation of lock-free algorithms.
+
+### When to prefer atomics
+
+- Simple counters / flags / sequence numbers → **Atomic\*** often better.
+- Multi-field invariants / complex critical sections → still use **locks** / sync.
+
+### Examples in this repo
+
+```bash
+make compile
+java -cp target AtomicCounter
+java -cp target CompareAndSetDemo
+```
+
+---
+
+## 20. Concurrent Random Numbers (`ThreadLocalRandom`)
+
+**Goal:** Generate random numbers from many threads (or `ForkJoinTask`s) **without** contending on one shared RNG.
+
+### Problem
+
+`Math.random()` / a shared `Random` use shared state. Under concurrent access → locks/contention → slower (and unsafe if you share `Random` without sync).
+
+### Solution (JDK 7+)
+
+```java
+int r = ThreadLocalRandom.current().nextInt(4, 77); // [4, 77)
+```
+
+`current()` returns the RNG for **this** thread — no sharing, less contention, better performance.
+
+Also useful: `nextInt()`, `nextLong()`, `nextDouble(origin, bound)`, etc.
+
+### When to use
+
+| Scenario | Prefer |
+|----------|--------|
+| Many threads / fork-join needing random | `ThreadLocalRandom` |
+| Single-threaded | `Random` is fine |
+| Cryptography | `SecureRandom` (not this) |
+
+### Examples in this repo
+
+```bash
+make compile
+java -cp target ThreadLocalRandomDemo
+```
+
+---
+
+## Topics
+
+Oracle high-level concurrency trail coverage for this learning path is complete through ThreadLocalRandom. Paste any review topic or the Immutable Objects section if you still want that.

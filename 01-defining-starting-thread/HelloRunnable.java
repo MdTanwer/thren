@@ -1,54 +1,20 @@
-// /**
-//  * Way 1: Pass a Runnable to Thread.
-//  * Preferred — task (Runnable) is separate from the worker (Thread).
-//  */
-// public class HelloRunnable implements Runnable {
+/**
+ * Way 1: Pass a Runnable to Thread.
+ * Preferred — task (Runnable) is separate from the worker (Thread).
+ */
+public class HelloRunnable implements Runnable {
 
-//     @Override
-//     public void run() {
-//         System.out.println("Hello from Runnable thread: " + Thread.currentThread().getName());
-//     }
-
-//     public static void main(String[] args) {
-//         System.out.println("Main starts on: " + Thread.currentThread().getName());
-
-//         Thread t = new Thread(new HelloRunnable(), "worker-1");
-//         t.start(); // schedules run() on a NEW thread — do NOT call run() yourself
-
-//         System.out.println("Main continues on: " + Thread.currentThread().getName());
-//     }
-// }
-
-
-
-// public class HelloRunnable  implements Runnable
-// {
-
-//     @Override
-//     public void run(){
-//         System.out.println("hello form the runnable thread");
-//     }
-
-//     public static void main(String[] args) {
-//         System.out.println("heelo form the main thread");
-
-//         Thread t = new Thread(new HelloRunnable() , "worker-1");
-//         t.start();
-
-//         System.out.println("main continues on: " + Thread.currentThread().getName());
-//     }
-// }
-
-
-
- public class HelloRunnable  implements Runnable {
-  @Override
-  public void run(){
-    System.out.println("hello form the runnable thread");
-  }
-    public static void main(String[] args) {
-        
-        system.out.println("main starts on: " + Thread.currentThread().getName());
+    @Override
+    public void run() {
+        System.out.println("Hello from Runnable thread: " + Thread.currentThread().getName());
     }
 
- }
+    public static void main(String[] args) {
+        System.out.println("Main starts on: " + Thread.currentThread().getName());
+
+        Thread t = new Thread(new HelloRunnable(), "worker-1");
+        t.start(); // schedules run() on a NEW thread — do NOT call run() yourself
+
+        System.out.println("Main continues on: " + Thread.currentThread().getName());
+    }
+}
