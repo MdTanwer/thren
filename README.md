@@ -524,6 +524,128 @@ java StaticVsInstanceLock
 
 ---
 
+## 9. Atomic Access
+
+**Goal:** Know which operations are **atomic** (all-or-nothing, no interleaving mid-action) and when that is — and isn’t — enough for thread safety.
+
+### What “atomic” means
+
+An atomic action **completes fully** or not at all. No other thread sees a “half-done” effect.
+
+**Not atomic:** `c++` (read → add → write — three steps, can interleave).
+
+### What IS atomic (Java memory model)
+
+| Operation | Atomic? |
+|-----------|---------|
+| Read/write **reference** | Yes |
+| Read/write **int, short, byte, char, boolean, float** | Yes |
+| Read/write **long, double** (plain) | **No** (can be torn on some platforms) |
+| Read/write **any field declared `volatile`** | Yes (including long/double) |
+
+Atomic actions **cannot interleave** with each other on the same variable — no thread interference on that single read/write.
+
+### But atomic ≠ fully thread-safe
+
+Two separate issues:
+
+| Problem | Does atomic read/write alone fix it? |
+|---------|--------------------------------------|
+| **Interference** on `c++` | No — compound action, not one atomic op |
+| **Memory consistency** | Partially — **`volatile`** also creates happens-before |
+
+**`volatile` guarantees:**
+
+- Write to volatile **happens-before** later read of that volatile.
+- Reader sees the latest volatile value **and** side effects that happened before that write.
+
+**`volatile` does NOT make `c++` safe** — still read-modify-write.
+
+For true atomic increment, use **`java.util.concurrent.atomic`** (`AtomicInteger`, etc.) — covered more in High-Level Concurrency Objects.
+
+### volatile vs synchronized vs atomic
+
+| Tool | Typical use |
+|------|-------------|
+| `volatile` | One writer / flag / publish state; visibility |
+| `synchronized` | Guard compound logic + visibility |
+| `AtomicInteger` etc. | Lock-free atomic read-modify-write (often faster for simple counters) |
+
+Atomics are faster than sync for simple ops but need more care — compound check-then-act still needs design (e.g. `compareAndSet`).
+
+### Examples in this repo
+
+```bash
+cd 09-atomic-access
+javac *.java
+java AtomicIntegerCounter   # always correct count
+java VolatileCounter        # volatile ≠ atomic increment
+java VolatileNotEnough      # check-then-act race despite volatile
+java LongTornRead           # long needs volatile for atomic access (spec rule)
+```
+
+---
+
+## 10. Deadlock
+
+**Goal:** Two or more threads **blocked forever**, each waiting for a lock the other holds.
+
+### Oracle’s Alphonse & Gaston story
+
+Each `Friend` has `synchronized bow()` and `bowBack()`. Rule: stay bowed until friend bows back.
+
+```
+Thread 1: alphonse.bow(gaston)   → locks Alphonse
+          calls gaston.bowBack() → needs Gaston lock
+
+Thread 2: gaston.bow(alphonse)   → locks Gaston
+          calls alphonse.bowBack() → needs Alphonse lock
+
+Thread 1 holds Alphonse, wants Gaston
+Thread 2 holds Gaston, wants Alphonse
+→ circular wait → DEADLOCK (neither can proceed)
+```
+
+### Four conditions (Coffman) — all must hold for deadlock
+
+1. **Mutual exclusion** — resource (lock) held by one thread at a time
+2. **Hold and wait** — thread holds a lock while waiting for another
+3. **No preemption** — locks aren’t forcibly taken away
+4. **Circular wait** — A waits for B, B waits for A (cycle in the wait graph)
+
+Break **any one** → avoid deadlock. Common fix: **lock ordering** — always acquire locks in the same global order.
+
+### How the JVM executes this
+
+```
+alphonse.bow(gaston):
+  monitorenter alphonse     ✓ acquired
+  gaston.bowBack(this):
+    monitorenter gaston     ✗ BLOCKED (Thread 2 owns gaston)
+
+gaston.bow(alphonse):
+  monitorenter gaston       ✓ acquired
+  alphonse.bowBack(this):
+    monitorenter alphonse   ✗ BLOCKED (Thread 1 owns alphonse)
+```
+
+Both threads stuck in `TIMED_WAITING` / `BLOCKED` on the other’s monitor — forever unless interrupted.
+
+### Fix in this repo (`DeadlockFixed`)
+
+Always lock **both** friends in name order (`Alphonse` before `Gaston`). No cycle possible.
+
+### Examples in this repo
+
+```bash
+cd 10-deadlock
+javac *.java
+timeout 3 java Deadlock      # hangs — classic deadlock (use Ctrl+C or timeout)
+java DeadlockFixed           # completes cleanly
+```
+
+---
+
 ## Topics (more coming)
 
 <!-- Next Oracle sections go here -->
