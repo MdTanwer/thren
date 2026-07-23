@@ -817,6 +817,124 @@ Shows `ExecutorService` + `AtomicInteger` + `ThreadLocalRandom` together. Deep d
 
 ---
 
+## 14. Lock Objects
+
+**Goal:** Use `java.util.concurrent.locks.Lock` (usually `ReentrantLock`) when you need to **back out** of acquiring a lock — something `synchronized` cannot do.
+
+### Intrinsic lock vs `Lock`
+
+| | `synchronized` | `Lock` (`ReentrantLock`) |
+|--|----------------|--------------------------|
+| Acquire | Enter block/method | `lock.lock()` |
+| Release | Automatic on exit | **Must** `unlock()` in `finally` |
+| Wait if busy | Always blocks | Can **`tryLock()`** / timeout / interrupt |
+| Conditions | `wait` / `notify` | `Condition` objects |
+
+Same rule: only **one** thread owns a given lock at a time. Reentrant: same thread can re-enter.
+
+### Biggest advantage — back out
+
+```java
+if (lock.tryLock()) {           // or tryLock(timeout, unit)
+    try { /* critical */ }
+    finally { lock.unlock(); }
+} else {
+    // lock busy — do something else (no deadlock wait)
+}
+
+lock.lockInterruptibly();       // give up if interrupted while waiting
+```
+
+### Safelock — deadlock fix for Alphonse & Gaston
+
+Old deadlock: each thread held **one** friend’s lock and waited for the other.
+
+New approach: `tryLock()` on **both** locks. If either fails → unlock what you got → skip the bow (no circular wait).
+
+```
+impendingBow:
+  myLock   = this.lock.tryLock()
+  yourLock = other.lock.tryLock()
+  if not both → unlock any you hold → return false
+  else return true → bow → unlock both in finally
+```
+
+### Examples in this repo
+
+```bash
+cd 14-lock-objects
+javac *.java
+java TryLockDemo    # tryLock fails immediately / with timeout
+java Safelock       # bows for ~2s, never deadlocks
+```
+
+---
+
+## 15. Executor Interfaces
+
+**Goal:** Launch tasks through an **executor** instead of `new Thread(...).start()`. Declare variables as interface types (`Executor`, `ExecutorService`, `ScheduledExecutorService`).
+
+### The hierarchy
+
+```
+Executor
+  └── execute(Runnable)
+        │
+        └── ExecutorService
+              ├── submit(Runnable|Callable) → Future
+              ├── invokeAll / invokeAny
+              └── shutdown / shutdownNow
+                    │
+                    └── ScheduledExecutorService
+                          ├── schedule(delay)
+                          ├── scheduleAtFixedRate
+                          └── scheduleWithFixedDelay
+```
+
+### `Executor`
+
+```java
+// Old
+(new Thread(r)).start();
+
+// New — drop-in style
+e.execute(r);
+```
+
+`execute` may: run on a **new** thread, reuse a **pool** worker, or **queue** the task. Spec does not require “always new thread.”
+
+### `ExecutorService`
+
+| Feature | Meaning |
+|---------|---------|
+| `submit(Runnable)` | Returns `Future<?>` (no result) |
+| `submit(Callable<T>)` | Returns `Future<T>` — get result later |
+| `Future.get()` | Wait for result / rethrow task exception |
+| `shutdown()` | No new tasks; finish queued |
+| `shutdownNow()` | Try to cancel running; interrupt |
+
+Tasks should handle **interrupts** so shutdown can stop them.
+
+### `ScheduledExecutorService`
+
+| Method | Behavior |
+|--------|----------|
+| `schedule(..., delay)` | Once, after delay |
+| `scheduleAtFixedRate` | Repeat at fixed period from start |
+| `scheduleWithFixedDelay` | Wait *delay* after each finish, then again |
+
+### Examples in this repo
+
+```bash
+cd 15-executor-interfaces
+javac *.java
+java ExecutorExecuteDemo
+java ExecutorServiceSubmitDemo
+java ScheduledExecutorDemo
+```
+
+---
+
 ## Topics (more coming)
 
-<!-- Next: Lock Objects, Executors, ... -->
+<!-- Next: Thread Pools, ... -->
