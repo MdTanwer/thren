@@ -646,6 +646,177 @@ java DeadlockFixed           # completes cleanly
 
 ---
 
+## 11. Guarded Blocks
+
+**Goal:** Coordinate threads efficiently — wait for a condition instead of busy-spinning.
+
+### Bad vs good guard
+
+```java
+// BAD — burns CPU
+while (!joy) {}
+
+// GOOD — park until notified
+public synchronized void guardedJoy() {
+    while (!joy) {
+        wait();  // releases lock, sleeps until notify/notifyAll
+    }
+    // proceed
+}
+```
+
+### Rules (Oracle)
+
+1. Call **`wait()`** only while holding the object’s intrinsic lock (`synchronized`).
+2. Always `wait()` inside a **`while`** that re-checks the condition (spurious wakeups / wrong event).
+3. Other thread sets the condition, then **`notifyAll()`** (or `notify()`).
+4. After `wait()` returns, the waiter **re-acquires** the lock before continuing.
+
+### How the JVM executes wait / notifyAll
+
+```
+Thread A (waiter)                    Thread B (notifier)
+─────────────────                    ───────────────────
+synchronized(d) {
+  while (!joy) {
+    wait() ──► release lock
+               state WAITING
+                                     synchronized(d) {
+                                       joy = true
+                                       notifyAll() ──► wake A
+                                     }  // release lock
+    ◄── re-acquire lock
+  }
+  use joy...
+}
+```
+
+| Method | Effect |
+|--------|--------|
+| `wait()` | Release lock + park until notified (or interrupted) |
+| `notifyAll()` | Wake **all** threads waiting on this monitor |
+| `notify()` | Wake **one** arbitrary waiter (rare; use when many identical workers) |
+
+### Producer–Consumer (`Drop`)
+
+Shared object with one slot:
+
+| State | Meaning |
+|-------|---------|
+| `empty == true` | Consumer must `wait`; producer may `put` |
+| `empty == false` | Producer must `wait`; consumer may `take` |
+
+```
+Producer put → empty=false → notifyAll
+Consumer take → empty=true  → notifyAll
+```
+
+They alternate — never overwrite unread data, never take empty.
+
+### Examples in this repo
+
+```bash
+cd 11-guarded-blocks
+javac *.java
+java GuardedJoyDemo
+java ProducerConsumerExample
+```
+
+---
+
+## 12. A Synchronized Class Example (`SynchronizedRGB`)
+
+**Goal:** Even a fully synchronized mutable class can look **inconsistent** if a client does **multiple** reads without holding the lock across them.
+
+### What the class does
+
+Color = `red`, `green`, `blue` + `name`. Mutators/accessors use `synchronized` so a single `set` / `getRGB` / `getName` / `invert` is atomic.
+
+### The trap
+
+```java
+int myColorInt = color.getRGB();      // Statement 1 — releases lock after return
+String myColorName = color.getName(); // Statement 2 — another thread may set() in between
+```
+
+Each call is synchronized **by itself**, but **together** they are not one atomic snapshot.
+
+```
+Reader: getRGB() → 0x000000 ("black" bits)
+Changer: set(255,255,255, "Pure White")
+Reader: getName() → "Pure White"   ← RGB and name don't match!
+```
+
+### Fix — bind the statements
+
+```java
+synchronized (color) {
+    int myColorInt = color.getRGB();
+    String myColorName = color.getName();
+}
+```
+
+Same lock for both reads → `set` cannot sneak in. Works because synchronized methods are **reentrant** on `this`.
+
+### Lesson
+
+| Level | Safe? |
+|-------|-------|
+| One synchronized method call | Yes — consistent for that call |
+| Several calls without outer sync | No — can mix old RGB + new name |
+| Client holds lock across related reads | Yes — consistent compound snapshot |
+
+Better long-term fix (next Oracle section): make the class **immutable** so no `set` can change mid-read.
+
+### Examples in this repo
+
+```bash
+cd 12-synchronized-rgb
+javac *.java
+java InconsistentSnapshot   # often many mismatches
+java ConsistentSnapshot     # mismatches = 0
+```
+
+---
+
+## 13. High Level Concurrency Objects (overview)
+
+**Goal:** Move from hand-rolled `Thread` / `synchronized` / `wait` to **`java.util.concurrent`** building blocks designed for multi-core apps.
+
+### Low-level vs high-level
+
+| Low-level (so far) | High-level (Java 5+) |
+|--------------------|----------------------|
+| `new Thread(...).start()` | **Executors** — submit tasks to a pool |
+| `synchronized` / intrinsic lock | **Lock objects** — `ReentrantLock`, tryLock, fairness |
+| Manual sync around lists/maps | **Concurrent collections** — `ConcurrentHashMap`, etc. |
+| `volatile` / careful sync for counters | **Atomic variables** — `AtomicInteger`, CAS |
+| Shared `Random` (contention) | **ThreadLocalRandom** (JDK 7+) |
+
+Low-level APIs still work for small demos. Large apps need pools, richer locks, and lock-free/shared structures.
+
+### What’s coming (Oracle’s map)
+
+1. **Lock objects** — flexible locking idioms beyond `synchronized`
+2. **Executors** — launch/manage threads; thread pools for scale
+3. **Concurrent collections** — less boilerplate sync for shared data
+4. **Atomic variables** — minimize sync; avoid consistency errors
+5. **ThreadLocalRandom** — fast per-thread random numbers
+
+Package home: `java.util.concurrent` (+ concurrent Collections types).
+
+### Taste in this repo
+
+```bash
+cd 13-high-level-overview
+javac *.java
+java HighLevelOverview
+```
+
+Shows `ExecutorService` + `AtomicInteger` + `ThreadLocalRandom` together. Deep dives follow as you paste each Oracle subsection.
+
+---
+
 ## Topics (more coming)
 
-<!-- Next Oracle sections go here -->
+<!-- Next: Lock Objects, Executors, ... -->
